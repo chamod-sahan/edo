@@ -22,7 +22,7 @@ const SalePdf = ({ sale }: { sale: Sale }) => (
     <Page size="A4" style={pdfStyles.page}>
       <Text style={pdfStyles.title}>Sales Receipt</Text>
       <Text style={{ textAlign: 'center' as const, marginBottom: 20, fontSize: 12 }}>
-        Invoice #: {sale.invoiceNo}
+        Sale ID: {sale.id}
       </Text>
 
       <View style={pdfStyles.section}>
@@ -35,7 +35,7 @@ const SalePdf = ({ sale }: { sale: Sale }) => (
         <View style={pdfStyles.row}><Text style={pdfStyles.label}>Quantity:</Text><Text style={pdfStyles.value}>{sale.quantity}</Text></View>
         <View style={pdfStyles.row}><Text style={pdfStyles.label}>Net Weight:</Text><Text style={pdfStyles.value}>{sale.netWeight} kg</Text></View>
         <View style={pdfStyles.row}><Text style={pdfStyles.label}>Price:</Text><Text style={pdfStyles.value}>₹{sale.price.toLocaleString('en-IN')}</Text></View>
-        <View style={pdfStyles.row}><Text style={pdfStyles.label}>Delivered:</Text><Text style={pdfStyles.value}>{sale.delivered ? 'Yes' : 'No'}</Text></View>
+        <View style={pdfStyles.row}><Text style={pdfStyles.label}>Status:</Text><Text style={pdfStyles.value}>{sale.approvalStatusString || (sale.delivered ? 'Delivered' : 'Pending')}</Text></View>
       </View>
 
       <Text style={pdfStyles.footer}>
@@ -48,7 +48,6 @@ const SalePdf = ({ sale }: { sale: Sale }) => (
 // ───────────── Sale Type ─────────────
 interface Sale {
   id: number;
-  invoiceNo: string;
   buyerName: string;
   buyerCode: string;
   saleDate: string;
@@ -59,6 +58,8 @@ interface Sale {
   netWeight: number;
   price: number;
   delivered: boolean;
+  approvalStatusString?: string; // Added this field based on API response
+  status?: string; // Optional status field from API
 }
 
 // ───────────── Buyer Dashboard ─────────────
@@ -89,7 +90,7 @@ export default function BuyerDashboard() {
         const token = localStorage.getItem('authToken');
         if (!token) return router.push('/login');
 
-        const res = await fetch('http://51.75.119.133:8080/api/Sales', {
+        const res = await fetch('http://51.75.119.133:8080/api/Sales/approved', {
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         });
 
@@ -115,6 +116,34 @@ export default function BuyerDashboard() {
     router.push('/login');
   };
 
+  // Get status display with proper styling
+  const getStatusDisplay = (sale: Sale) => {
+    // Use approvalStatusString from API response
+    if (sale.approvalStatusString) {
+      const statusLower = sale.approvalStatusString.toLowerCase();
+      if (statusLower === 'delivered') {
+        return { text: 'Delivered', class: 'bg-green-500/20 text-green-300' };
+      } else if (statusLower === 'pending') {
+        return { text: 'Pending', class: 'bg-yellow-500/20 text-yellow-300' };
+      } else if (statusLower === 'shipped') {
+        return { text: 'Shipped', class: 'bg-blue-500/20 text-blue-300' };
+      } else if (statusLower === 'cancelled') {
+        return { text: 'Cancelled', class: 'bg-red-500/20 text-red-300' };
+      } else if (statusLower === 'processing') {
+        return { text: 'Processing', class: 'bg-purple-500/20 text-purple-300' };
+      } else if (statusLower === 'approved') {
+        return { text: 'Approved', class: 'bg-green-500/20 text-green-300' };
+      }
+      return { text: sale.approvalStatusString, class: 'bg-gray-500/20 text-gray-300' };
+    }
+    
+    // Fallback to delivered field if approvalStatusString is not available
+    return {
+      text: sale.delivered ? 'Delivered' : 'Pending',
+      class: sale.delivered ? 'bg-green-500/20 text-green-300' : 'bg-yellow-500/20 text-yellow-300'
+    };
+  };
+
   // Print PDF
   const printSale = async (sale: Sale) => {
     setPrintingId(sale.id);
@@ -137,7 +166,7 @@ export default function BuyerDashboard() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Sale_${sale.invoiceNo}_${sale.id}.pdf`;
+    a.download = `Sale_${sale.id}.pdf`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -157,6 +186,12 @@ export default function BuyerDashboard() {
                 Welcome, <strong>{userType}</strong>
               </p>
             </div>
+            <button
+              onClick={logout}
+              className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg border border-red-500/30 transition"
+            >
+              Logout
+            </button>
           </div>
 
           {/* Loading */}
@@ -187,7 +222,7 @@ export default function BuyerDashboard() {
               <table className="w-full text-left">
                 <thead>
                   <tr className="bg-white/5 border-b border-white/10">
-                    <th className="py-4 px-6 text-purple-300 font-medium">Invoice</th>
+                    <th className="py-4 px-6 text-purple-300 font-medium">Sale ID</th>
                     <th className="py-4 px-6 text-purple-300 font-medium">Buyer</th>
                     <th className="py-4 px-6 text-purple-300 font-medium">Date</th>
                     <th className="py-4 px-6 text-purple-300 font-medium">Amount</th>
@@ -196,39 +231,42 @@ export default function BuyerDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sales.map((s) => (
-                    <tr key={s.id} className="border-b border-white/5 hover:bg-white/5 transition">
-                      <td className="py-4 px-6 text-white">{s.invoiceNo}</td>
-                      <td className="py-4 px-6">
-                        <p className="font-medium text-white">{s.buyerName}</p>
-                        <p className="text-xs text-gray-400">{s.buyerCode}</p>
-                      </td>
-                      <td className="py-4 px-6 text-gray-300">{new Date(s.saleDate).toLocaleDateString('en-IN')}</td>
-                      <td className="py-4 px-6 text-gray-300">₹{s.price.toLocaleString('en-IN')}</td>
-                      <td className="py-4 px-6">
-                        <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${s.delivered ? 'bg-green-500/20 text-green-300' : 'bg-yellow-500/20 text-yellow-300'}`}>
-                          {s.delivered ? 'Delivered' : 'Pending'}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6 flex gap-2">
-                        <button
-                          onClick={() => printSale(s)}
-                          disabled={printingId === s.id}
-                          className="flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-700 hover:to-cyan-700 text-white text-sm rounded-lg disabled:opacity-70"
-                        >
-                          {printingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
-                          Print
-                        </button>
-                        <button
-                          onClick={() => downloadSale(s)}
-                          className="flex items-center gap-1 px-3 py-1.5 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 text-sm rounded-lg border border-cyan-500/30"
-                        >
-                          <Download className="w-4 h-4" />
-                          PDF
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {sales.map((s) => {
+                    const statusDisplay = getStatusDisplay(s);
+                    return (
+                      <tr key={s.id} className="border-b border-white/5 hover:bg-white/5 transition">
+                        <td className="py-4 px-6 text-white">{s.id}</td>
+                        <td className="py-4 px-6">
+                          <p className="font-medium text-white">{s.buyerName}</p>
+                          <p className="text-xs text-gray-400">{s.buyerCode}</p>
+                        </td>
+                        <td className="py-4 px-6 text-gray-300">{new Date(s.saleDate).toLocaleDateString('en-IN')}</td>
+                        <td className="py-4 px-6 text-gray-300">₹{s.price.toLocaleString('en-IN')}</td>
+                        <td className="py-4 px-6">
+                          <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${statusDisplay.class}`}>
+                            {statusDisplay.text}
+                          </span>
+                        </td>
+                        <td className="py-4 px-6 flex gap-2">
+                          <button
+                            onClick={() => printSale(s)}
+                            disabled={printingId === s.id}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-700 hover:to-cyan-700 text-white text-sm rounded-lg disabled:opacity-70"
+                          >
+                            {printingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
+                            Print
+                          </button>
+                          <button
+                            onClick={() => downloadSale(s)}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 text-sm rounded-lg border border-cyan-500/30"
+                          >
+                            <Download className="w-4 h-4" />
+                            PDF
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
